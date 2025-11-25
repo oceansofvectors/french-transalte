@@ -57,7 +57,8 @@ class Translator:
             embedding_dim=config.EMBEDDING_DIM,
             hidden_dim=config.HIDDEN_DIM,
             num_layers=config.NUM_LAYERS,
-            dropout=config.DROPOUT
+            dropout=config.DROPOUT,
+            use_packing=not config.USE_TPU  # Disable packing on TPU
         )
 
         decoder = Decoder(

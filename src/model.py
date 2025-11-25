@@ -13,7 +13,7 @@ import random
 class Encoder(nn.Module):
     """Bidirectional LSTM Encoder."""
 
-    def __init__(self, input_dim, embedding_dim, hidden_dim, num_layers, dropout):
+    def __init__(self, input_dim, embedding_dim, hidden_dim, num_layers, dropout, use_packing=True):
         """
         Initialize the encoder.
 
@@ -23,11 +23,13 @@ class Encoder(nn.Module):
             hidden_dim: Hidden state dimension
             num_layers: Number of LSTM layers
             dropout: Dropout probability
+            use_packing: Whether to use pack_padded_sequence (disable for TPU)
         """
         super().__init__()
 
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
+        self.use_packing = use_packing
 
         # Embedding layer
         self.embedding = nn.Embedding(input_dim, embedding_dim)
@@ -61,19 +63,25 @@ class Encoder(nn.Module):
         # Embed source tokens
         embedded = self.dropout(self.embedding(src))  # [batch_size, src_len, embedding_dim]
 
-        # Pack padded sequences
-        packed_embedded = nn.utils.rnn.pack_padded_sequence(
-            embedded,
-            src_lengths.cpu(),
-            batch_first=True,
-            enforce_sorted=False
-        )
+        # Conditionally use packing (TPU doesn't support pack_padded_sequence well)
+        if self.use_packing:
+            # Pack padded sequences
+            packed_embedded = nn.utils.rnn.pack_padded_sequence(
+                embedded,
+                src_lengths.cpu(),
+                batch_first=True,
+                enforce_sorted=False
+            )
 
-        # Forward pass through LSTM
-        packed_outputs, (hidden, cell) = self.lstm(packed_embedded)
+            # Forward pass through LSTM
+            packed_outputs, (hidden, cell) = self.lstm(packed_embedded)
 
-        # Unpack sequences
-        outputs, _ = nn.utils.rnn.pad_packed_sequence(packed_outputs, batch_first=True)
+            # Unpack sequences
+            outputs, _ = nn.utils.rnn.pad_packed_sequence(packed_outputs, batch_first=True)
+        else:
+            # Without packing (TPU-compatible)
+            outputs, (hidden, cell) = self.lstm(embedded)
+
         # outputs: [batch_size, src_len, hidden_dim * 2]
 
         # hidden and cell: [num_layers * 2, batch_size, hidden_dim]

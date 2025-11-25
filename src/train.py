@@ -77,6 +77,9 @@ def train_epoch(model, dataloader, optimizer, criterion, clip, device, config):
     model.train()
     epoch_loss = 0
 
+    if config.USE_TPU:
+        import torch_xla.core.xla_model as xm
+
     progress_bar = tqdm(dataloader, desc="Training", leave=False)
 
     for i, (src, tgt, src_lengths, tgt_lengths) in enumerate(progress_bar):
@@ -110,21 +113,27 @@ def train_epoch(model, dataloader, optimizer, criterion, clip, device, config):
 
         # Update weights (TPU-aware)
         if config.USE_TPU:
-            import torch_xla.core.xla_model as xm
             xm.optimizer_step(optimizer)
+            xm.mark_step()  # Mark step boundary for XLA
         else:
             optimizer.step()
 
-        # Update loss
-        epoch_loss += loss.item()
+        # Update loss (TPU-safe)
+        if config.USE_TPU:
+            # Reduce loss to CPU less frequently for TPU
+            epoch_loss += loss.detach().cpu().item()
+        else:
+            epoch_loss += loss.item()
 
-        # Update progress bar
-        progress_bar.set_postfix({'loss': loss.item()})
+        # Update progress bar (less frequently on TPU)
+        if not config.USE_TPU or i % 10 == 0:
+            current_loss = loss.detach().cpu().item() if config.USE_TPU else loss.item()
+            progress_bar.set_postfix({'loss': current_loss})
 
     return epoch_loss / len(dataloader)
 
 
-def evaluate_epoch(model, dataloader, criterion, device):
+def evaluate_epoch(model, dataloader, criterion, device, config=None):
     """
     Evaluate for one epoch.
 
@@ -133,6 +142,7 @@ def evaluate_epoch(model, dataloader, criterion, device):
         dataloader: Validation dataloader
         criterion: Loss criterion
         device: Device to run on
+        config: Configuration object (optional)
 
     Returns:
         Average epoch loss
@@ -140,10 +150,14 @@ def evaluate_epoch(model, dataloader, criterion, device):
     model.eval()
     epoch_loss = 0
 
+    use_tpu = config.USE_TPU if config else False
+    if use_tpu:
+        import torch_xla.core.xla_model as xm
+
     with torch.no_grad():
         progress_bar = tqdm(dataloader, desc="Evaluating", leave=False)
 
-        for src, tgt, src_lengths, tgt_lengths in progress_bar:
+        for i, (src, tgt, src_lengths, tgt_lengths) in enumerate(progress_bar):
             # Move to device
             src = src.to(device)
             tgt = tgt.to(device)
@@ -159,10 +173,17 @@ def evaluate_epoch(model, dataloader, criterion, device):
 
             # Calculate loss
             loss = criterion(output, tgt)
-            epoch_loss += loss.item()
 
-            # Update progress bar
-            progress_bar.set_postfix({'loss': loss.item()})
+            # Update loss (TPU-safe)
+            if use_tpu:
+                epoch_loss += loss.detach().cpu().item()
+            else:
+                epoch_loss += loss.item()
+
+            # Update progress bar (less frequently on TPU)
+            if not use_tpu or i % 10 == 0:
+                current_loss = loss.detach().cpu().item() if use_tpu else loss.item()
+                progress_bar.set_postfix({'loss': current_loss})
 
     return epoch_loss / len(dataloader)
 
@@ -222,7 +243,8 @@ def train(config=None):
         embedding_dim=config.EMBEDDING_DIM,
         hidden_dim=config.HIDDEN_DIM,
         num_layers=config.NUM_LAYERS,
-        dropout=config.DROPOUT
+        dropout=config.DROPOUT,
+        use_packing=not config.USE_TPU  # Disable packing on TPU
     )
 
     decoder = Decoder(
@@ -264,7 +286,7 @@ def train(config=None):
 
         # Evaluate
         logger.info(f"Epoch {epoch+1}/{config.NUM_EPOCHS} - Evaluating...")
-        val_loss = evaluate_epoch(model, val_loader, criterion, config.DEVICE)
+        val_loss = evaluate_epoch(model, val_loader, criterion, config.DEVICE, config)
 
         end_time = time.time()
 
