@@ -4,10 +4,15 @@ Contains all hyperparameters and settings.
 """
 
 import torch
+import os
 from pathlib import Path
 
 class Config:
     """Configuration class for the translation model."""
+
+    # Device override (set to force a specific device)
+    # Options: None (auto-detect), "cuda", "mps", "cpu", "tpu"
+    FORCE_DEVICE = os.environ.get("FORCE_DEVICE", None)
 
     # Paths
     ROOT_DIR = Path(__file__).parent.parent
@@ -54,19 +59,56 @@ class Config:
     GRAD_CLIP = 1.0
     TEACHER_FORCING_RATIO = 0.5
 
-    # Device - TPU, MPS for Mac, CUDA for GPU, CPU as fallback
-    try:
-        import torch_xla.core.xla_model as xm
-        DEVICE = xm.xla_device()
-        USE_TPU = True
-    except ImportError:
-        USE_TPU = False
-        if torch.backends.mps.is_available():
-            DEVICE = torch.device("mps")
-        elif torch.cuda.is_available():
-            DEVICE = torch.device("cuda")
+    # TPU-specific optimization
+    @classmethod
+    def get_batch_size(cls):
+        """Get optimal batch size based on device."""
+        if cls.USE_TPU:
+            return 512  # TPUs need large batches
         else:
+            return cls.BATCH_SIZE
+
+    # Device - Auto-detect or use FORCE_DEVICE
+    if FORCE_DEVICE:
+        # Force specific device
+        if FORCE_DEVICE.lower() == "tpu":
+            try:
+                import torch_xla.core.xla_model as xm
+                DEVICE = xm.xla_device()
+                USE_TPU = True
+            except ImportError:
+                raise RuntimeError("TPU requested but torch_xla not available")
+        elif FORCE_DEVICE.lower() == "cuda":
+            if torch.cuda.is_available():
+                DEVICE = torch.device("cuda")
+                USE_TPU = False
+            else:
+                raise RuntimeError("CUDA requested but not available")
+        elif FORCE_DEVICE.lower() == "mps":
+            if torch.backends.mps.is_available():
+                DEVICE = torch.device("mps")
+                USE_TPU = False
+            else:
+                raise RuntimeError("MPS requested but not available")
+        elif FORCE_DEVICE.lower() == "cpu":
             DEVICE = torch.device("cpu")
+            USE_TPU = False
+        else:
+            raise ValueError(f"Invalid FORCE_DEVICE: {FORCE_DEVICE}. Must be 'tpu', 'cuda', 'mps', or 'cpu'")
+    else:
+        # Auto-detect: TPU > MPS > CUDA > CPU
+        try:
+            import torch_xla.core.xla_model as xm
+            DEVICE = xm.xla_device()
+            USE_TPU = True
+        except ImportError:
+            USE_TPU = False
+            if torch.backends.mps.is_available():
+                DEVICE = torch.device("mps")
+            elif torch.cuda.is_available():
+                DEVICE = torch.device("cuda")
+            else:
+                DEVICE = torch.device("cpu")
 
     # Beam search
     BEAM_WIDTH = 5

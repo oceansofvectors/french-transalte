@@ -256,10 +256,12 @@ def prepare_data(config, tokenizer):
     val_dataset = TranslationDataset(val_src, val_tgt)
     test_dataset = TranslationDataset(test_src, test_tgt)
 
-    # Create dataloaders
+    # Create dataloaders with device-optimized batch size
+    batch_size = config.get_batch_size() if hasattr(config, 'get_batch_size') else config.BATCH_SIZE
+    print(f"Using batch size: {batch_size}")
     train_loader, val_loader, test_loader = create_dataloaders(
         train_dataset, val_dataset, test_dataset,
-        config.BATCH_SIZE, config.PAD_IDX
+        batch_size, config.PAD_IDX
     )
 
     return train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset
