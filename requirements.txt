@@ -1,0 +1,11 @@
+torch>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+tqdm>=4.65.0
+sacrebleu>=2.3.0
+requests>=2.31.0
+
+# Optional: TPU support (only needed for Google Cloud TPU)
+# Uncomment the line below if running on TPU
+# torch-xla>=2.0.0
+# cloud-tpu-client
